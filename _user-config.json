@@ -1,0 +1,10 @@
+{
+  "ethNode": {
+    "rpcAddress": "ws://localhost:8546",
+    "privateKey": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "bscNode": {
+    "rpcAddress": "https://data-seed-prebsc-1-s1.binance.org:8545/",
+    "privateKey": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}
