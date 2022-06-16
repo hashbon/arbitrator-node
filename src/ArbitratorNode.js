@@ -2,24 +2,25 @@ const Web3 = require("web3");
 
 class ArbitratorNode
 {
-    constructor(
-        name, chainId, ordersWeb3Address, paymentsWeb3Address,
-        ordersContractAddress, paymentsContractAddress, hashTokenAddress,
-        arbitratorPrivateKey, contractAbi, hashTokenAbi,
-        loopTimeout, pendingTimeout
-    ) {
-        this.name = name;
+    constructor(chainId, chains, nodes, contractAbi, hashTokenAbi) {
         this.chainId = chainId;
-        this.ordersWeb3 = new Web3(ordersWeb3Address);
-        this.paymentsWeb3 = new Web3(paymentsWeb3Address);
-        this.ordersContractAddress = ordersContractAddress;
-        this.ordersContract = new this.ordersWeb3.eth.Contract(contractAbi, ordersContractAddress);
-        this.paymentsContract = new this.paymentsWeb3.eth.Contract(contractAbi, paymentsContractAddress);
-        this.hashTokenAddress = hashTokenAddress;
-        this.hashTokenContract = new this.ordersWeb3.eth.Contract(hashTokenAbi, hashTokenAddress);
-        this.arbitratorAccount = this.ordersWeb3.eth.accounts.privateKeyToAccount(arbitratorPrivateKey);
-        this.loopTimeout = loopTimeout;
-        this.pendingTimeout = pendingTimeout;
+        this.name = chains[chainId].name;
+        this.hashTokenAddress = chains[chainId].hashTokenAddress;
+        this.web3 = {};
+        this.contracts = {};
+        for (let id in chains) {
+            if (chains.hasOwnProperty(id) && nodes.hasOwnProperty(id)) {
+                this.web3[id] = new Web3(nodes[id].rpcAddress);
+                this.contracts[id] = new this.web3[id].eth.Contract(contractAbi, chains[id].contractAddress);
+            }
+        }
+        this.ordersWeb3 = this.web3[chainId];
+        this.hashTokenContract = new this.ordersWeb3.eth.Contract(hashTokenAbi, this.hashTokenAddress);
+        this.ordersContract = this.contracts[chainId];
+        this.ordersContractAddress = chains[chainId].contractAddress;
+        this.arbitratorAccount = this.ordersWeb3.eth.accounts.privateKeyToAccount(nodes[chainId].privateKey);
+        this.loopTimeout = chains[chainId].loopTimeout;
+        this.pendingTimeout = chains[chainId].pendingTimeout;
         this.processedOrders = [];
         this.pendingOrders = {};
         this.hashTokensApproved = false;
@@ -33,9 +34,18 @@ class ArbitratorNode
                 this.ordersContractAddress
             ).call().then(allowance => {
                 return allowance >= minVoteWeight;
-            })
+            }).catch(error => {
+                this.log("Allowance checking error", error);
+                return null;
+            });
+        }).catch(error => {
+            this.log("Min vote weight getting error", error);
+            return null;
         }).then(approved => {
             //Making the HASH token approve
+            if (approved === null) {
+                return null;
+            }
             return approved ? true : this.approveHashTokens();
         }).then(approved => {
             //Getting an orderId for the arbitration
@@ -45,23 +55,34 @@ class ArbitratorNode
             ).call().then(result => {
                 this.log("Looking for the order");
                 return !result[1] ? null : result[0];
-            })
+            }).catch(error => {
+                this.log("Order getting error", error);
+                return null;
+            });
         }).then(orderId => {
             //Getting the Order entity by the orderId
             return orderId === null ? null : this.ordersContract.methods.orders(orderId).call().then(order => {
                 order.orderId = orderId;
                 return order;
+            }).catch(error => {
+                this.log("Order getting error", error);
+                return null;
             });
         }).then(order => {
             //Getting the payToken property from the Offer entity
             return !order ? null : this.ordersContract.methods.offers(order.offerId).call().then(offer => {
+                order.payChainId = offer.payChainId;
                 order.payToken = offer.payToken;
                 this.log("Order for arbitration", order);
                 return order;
+            }).catch(error => {
+                this.log("Offer getting error", error);
+                return null;
             });
         }).then(order => {
             //Checking the Payment
-            return !order ? null : this.paymentsContract.methods.checkPayment(
+            return !order ? null : this.contracts[order.payChainId].methods.checkPayment(
+                this.chainId,
                 order.orderId,
                 order.payAmount,
                 order.payToken,
@@ -70,6 +91,9 @@ class ArbitratorNode
                 this.log(success ? "Order is successfully paid" : "Order is not paid");
                 order.success = success;
                 return order;
+            }).catch(error => {
+                this.log("Payment checking error", error);
+                return null;
             });
         }).then(order => {
             //Voting
